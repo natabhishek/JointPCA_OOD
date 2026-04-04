@@ -150,7 +150,8 @@ class JointPCAPostprocessor(BasePostprocessor):
         for name, module in model.named_modules():
             if isinstance(module, nn.Linear):
                 break
-            if len(list(module.children())) == 0 and not isinstance(module, nn.Conv2d):
+            if (len(list(module.children())) == 0 and
+                    not isinstance(module, nn.Conv2d)):
                 p_name, p_mod = name, module
         return p_name, p_mod
 
@@ -320,6 +321,8 @@ class JointPCAPostprocessor(BasePostprocessor):
 
         print(f'[JointPCA] Fitting PCA: N={actual_n_train}, D={feat_dim}, K={n_comp}')
         X   = np.asarray(train_features[:actual_n_train], dtype=np.float32)
+        # 'randomized' requires n_components < min(n_samples, n_features), which is
+        # guaranteed by the n_comp = min(N, D) - 1 cap applied in setup().
         pca = PCA(n_components=n_comp, svd_solver='randomized', random_state=0, copy=False)
         pca.fit(X)
         del X
@@ -352,7 +355,7 @@ class JointPCAPostprocessor(BasePostprocessor):
             print(f'  {n}')
 
         # ── 1. Probe feature dimension ──────────────────────────────── #
-        train_loader = id_loader_dict['test']
+        train_loader = id_loader_dict['train']
         for batch in train_loader:
             data     = batch['data'] if isinstance(batch, dict) else batch[0]
             probe    = self._extract_batch(net, data.to(self.device))
@@ -401,7 +404,9 @@ class JointPCAPostprocessor(BasePostprocessor):
             torch.cuda.empty_cache()
 
         # ── 3. n_components ────────────────────────────────────────── #
-        n_comp = min(actual_n_train, feat_dim)
+        # sklearn randomized solver requires n_components < min(N, D).
+        # We cap at min(N, D) - 1; for very small datasets use 'full' instead.
+        n_comp = min(actual_n_train, feat_dim) - 1
         self.n_components_used = n_comp
 
         # ── 4. PCA (cached) ─────────────────────────────────────────── #
