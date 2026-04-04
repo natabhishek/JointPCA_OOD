@@ -1,0 +1,8 @@
+postprocessor:
+  name: jointpca
+  APS_mode: False
+  postprocessor_args:
+    # Maximum number of ID training samples used to fit PCA.
+    # Increase for better coverage; decrease to save memory.
+    max_train_samples: 45000
+  postprocessor_sweep: {}
