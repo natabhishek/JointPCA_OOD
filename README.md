@@ -2,7 +2,7 @@
 
 This repository contains the implementation of **JointPCA**, an out-of-distribution (OOD) detection postprocessor designed to plug into the [OpenOOD](https://github.com/Jingkang50/OpenOOD) benchmark framework.
 
-Supported backbones: **ResNet-50** and **ViT** (timm / torchvision).
+Supported backbones: **ResNet-50** and **ViT**.
 
 ---
 
@@ -76,7 +76,7 @@ cd OpenOOD
 pip install -e .
 ```
 
-Follow the [OpenOOD README](https://github.com/Jingkang50/OpenOOD) to download the relevant benchmark datasets and obtain pre-trained checkpoints for **ResNet-50** and **ViT** on your target ID dataset (e.g. ImageNet-1K).
+Follow the [OpenOOD README](https://github.com/Jingkang50/OpenOOD) to download the relevant benchmark datasets and obtain pre-trained checkpoints for **ResNet-50** and **ViT** on your target ID dataset (e.g. ImageNet-1K). 
 
 ### 2. Copy the postprocessor
 
