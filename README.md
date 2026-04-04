@@ -4,63 +4,27 @@ This repository contains the implementation of **JointPCA**, an out-of-distribut
 
 Supported backbones: **ResNet-50** and **ViT**.
 
+## Files
+
+| File | Description |
+|---|---|
+| `jointpca_postprocessor.py` | Main postprocessor class |
+| `jointpca.yml` | Config file for the OpenOOD pipeline |
+| `README.md` | This file |
+
 ---
 
 ## Method
 
-### Feature extraction
+**Feature extraction.** Forward hooks capture activations from multiple layers simultaneously. For ResNet-50, hooks are placed on all `Conv2d` layers, residual block outputs, and the penultimate layer; spatial maps are reduced via global average pooling. For ViT, hooks capture every encoder block output, split into the CLS token and a patch-GAP vector. All per-layer vectors are concatenated into a single joint feature.
 
-Forward hooks are registered on the model before any inference runs. The hooked layers depend on the architecture:
+**PCA.** Sklearn's randomised PCA is fit on up to `max_train_samples` ID training features using the full rank $K = \min(N, D)$. The fit is cached to disk after the first run.
 
-**ResNet-50 (CNN)**  
-Hooks are placed on:
-1. Every `Conv2d` layer (all kernel sizes)
-2. Every residual block output — matched by the pattern `layer{1-4}.{block_idx}` (e.g. `layer1.0`, `layer3.2`)
-3. The penultimate layer (the last non-linear, non-classifier layer, typically the post-GAP feature vector)
-
-Spatial feature maps `(B, C, H, W)` are reduced to `(B, C)` by **global average pooling** before concatenation.
-
-**ViT (Vision Transformer)**  
-Hooks are placed on every encoder block — detected automatically by checking for `nn.MultiheadAttention` + `nn.LayerNorm` as direct children. From each block output `(B, L, D)`:
-- The **CLS token** `[:, 0, :]` → `(B, D)`
-- The **patch-GAP** `[:, 1:, :].mean(dim=1)` → `(B, D)`
-
-These two are concatenated, giving `(B, 2D)` per block.
-
-All per-layer vectors are concatenated along the feature axis into a single joint feature vector of dimension $D_\text{joint}$.
-
-### PCA
-
-Sklearn's **randomised PCA** (`svd_solver='randomized'`) is fit on up to `max_train_samples` ID training features. The full rank is used: $K = \min(N, D_\text{joint})$. The mean vector, principal components, and per-component eigenvalues are cached to disk after the first run.
-
-### Scoring
-
-Each test sample is projected onto the PCA subspace and scored with the **squared Mahalanobis distance** from the ID training mean:
+**Scoring.** Each test sample is scored with the squared Mahalanobis distance from the ID training mean in PCA space:
 
 $$\text{score}(z) = \sum_{i=1}^{K} \frac{y_i^2}{\lambda_i}, \quad y_i = u_i^\top (z - \mu)$$
 
-where $\lambda_i$ is the $i$-th eigenvalue (variance along the $i$-th PC). A **higher** score indicates the sample is further from the ID distribution (more likely OOD). OpenOOD receives the negated score so that higher = more in-distribution, matching its convention.
-
-### Caching
-
-All intermediate artefacts are stored as memory-mapped NumPy arrays under `./jointpca_cache/`:
-
-```
-jointpca_cache/
-  features/
-    features_train_{config_fp}.npy       # ID training features  (N, D)
-    features_{dataset}_{config_fp}.npy   # OOD / test features   (N, D)
-  pca/
-    pca_{config_fp}.npz                  # mean, components, eigenvalues
-  projections/
-    projections_train_{config_fp}.npy    # train projections      (N, K)
-  scores/
-    scores_{dataset}_{config_fp}_md.npz  # per-sample MD scores
-  metadata/
-    metadata_{config_fp}.npz             # n_samples, n_features, layer_names
-```
-
-The config fingerprint `{config_fp}` encodes the model class name and `max_train_samples`. Changing either value automatically triggers a fresh extraction and PCA fit. Delete individual cache files to force recomputation of a specific stage.
+where $\lambda_i$ is the $i$-th eigenvalue. Higher score = more OOD.
 
 ---
 
@@ -68,15 +32,13 @@ The config fingerprint `{config_fp}` encodes the model class name and `max_train
 
 ### 1. Install OpenOOD
 
-Clone and install the OpenOOD framework:
-
 ```bash
 git clone https://github.com/Jingkang50/OpenOOD.git
 cd OpenOOD
 pip install -e .
 ```
 
-Follow the [OpenOOD README](https://github.com/Jingkang50/OpenOOD) to download the relevant benchmark datasets and obtain pre-trained checkpoints for **ResNet-50** and **ViT** on your target ID dataset (e.g. ImageNet-1K). 
+Follow the [OpenOOD README](https://github.com/Jingkang50/OpenOOD) to download the relevant benchmark datasets and obtain pre-trained checkpoints for **ResNet-50** and **ViT** on your target ID dataset (e.g. ImageNet-1K).
 
 ### 2. Copy the postprocessor
 
@@ -199,3 +161,26 @@ All dependencies are already required by OpenOOD:
 | `scikit-learn` | Randomised PCA |
 | `numpy` | Memory-mapped feature storage |
 | `tqdm` | Progress bars |
+
+---
+
+## Cache layout
+
+All intermediate artefacts are stored as memory-mapped NumPy arrays under `./jointpca_cache/`:
+
+```
+jointpca_cache/
+  features/
+    features_train_{config_fp}.npy       # ID training features  (N, D)
+    features_{dataset}_{config_fp}.npy   # OOD / test features   (N, D)
+  pca/
+    pca_{config_fp}.npz                  # mean, components, eigenvalues
+  projections/
+    projections_train_{config_fp}.npy    # train projections      (N, K)
+  scores/
+    scores_{dataset}_{config_fp}_md.npz  # per-sample MD scores
+  metadata/
+    metadata_{config_fp}.npz             # n_samples, n_features, layer_names
+```
+
+The config fingerprint `{config_fp}` encodes the model class name and `max_train_samples`. Changing either value automatically triggers a fresh extraction and PCA fit. Delete individual cache files to force recomputation of a specific stage.
