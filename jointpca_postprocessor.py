@@ -3,13 +3,22 @@ JointPCA OOD Detection Postprocessor for OpenOOD
 -------------------------------------------------
 Extracts multi-layer activations via forward hooks, concatenates them into
 a joint feature vector, fits PCA (sklearn randomized), and scores test
-samples using the Mahalanobis distance in the PCA-whitened space.
+samples using the clipped-Mahalanobis protocol:
+
+  1. Compute log10(eigenvalue) spectrum of the fitted PCA.
+  2. Detect T1 (noise-spike cutoff) and T2 (mean of signal):
+       - ResNet50: histogram peak detection finds the noise spike on the
+         far left of the spectrum; T1 = valley right of that spike.
+         If no spike is found, T1 = leftmost eigenvalue.
+       - ViT: no noise spike present (peaks are too close together);
+         T1 = leftmost eigenvalue automatically.
+       T2 = mean(log10(ev)) for all PCs with log10(ev) >= T1.
+  3. Selected PCs: those with T1 <= log10(ev) <= T2.
+  4. Mahalanobis distance computed only on those selected PCs.
 
 Layer strategy:
-  - ResNet50                           : all Conv2d layers + residual block
-    outputs (layer1.x … layer4.x) + penultimate layer
-  - ViT (timm / torchvision)           : CLS token + patch-GAP from every
-    encoder block
+  - ResNet50 : all Conv2d layers + residual block outputs + penultimate
+  - ViT      : CLS token + patch-GAP from every encoder block
 
 Caching:
   All intermediate artefacts (features, PCA, projections, scores) are
@@ -29,6 +38,10 @@ import torch
 import torch.nn as nn
 from typing import Any
 from tqdm import tqdm
+from scipy.signal import find_peaks
+import matplotlib
+matplotlib.use('Agg')   # non-interactive backend, safe on servers
+import matplotlib.pyplot as plt
 
 from .base_postprocessor import BasePostprocessor
 
@@ -56,6 +69,8 @@ class JointPCAPostprocessor(BasePostprocessor):
         self.components         = None
         self.explained_variance = None
         self.n_components_used  = None
+        self.selected_mask      = None   # boolean mask: PCs in [T1, T2]
+        self.min_spike_gap      = 5.0    # log10(ev) units; see clip protocol
         self._config_fp         = None
         self.cache_dir          = './jointpca_cache'
         self.layer_names        = []
@@ -95,7 +110,7 @@ class JointPCAPostprocessor(BasePostprocessor):
                        f'projections_train_{self._config_fp}.npy')
 
     def _path_scores(self, dataset):
-        return self._p('scores', f'scores_{dataset}_{self._config_fp}_md.npz')
+        return self._p('scores', f'scores_{dataset}_{self._config_fp}_clipmd.npz')
 
     @staticmethod
     def _mmap_write(path, shape, dtype=np.float32):
@@ -454,23 +469,169 @@ class JointPCAPostprocessor(BasePostprocessor):
             mm_proj.flush()
             del mm_proj
 
+        # ── 5. Select PCs via clip-to-mean protocol ────────────────── #
+        self._select_pcs()
+
         print(f'[JointPCA] Setup complete.')
 
     # ------------------------------------------------------------------ #
-    # Mahalanobis scoring                                                  #
+    # PC selection: clip-to-mean protocol                                  #
+    # ------------------------------------------------------------------ #
+
+    def _select_pcs(self):
+        """
+        Compute the boolean mask selecting PCs in [T1, T2] of log10(ev),
+        and save a spectrum plot to ./jointpca_cache/plots/ for visual
+        verification that T1/T2 landed correctly.
+
+        T1 (noise-spike cutoff):
+          Build a histogram of log10(ev) with bin width 0.15.
+          Find histogram peaks with prominence >= 10.
+          If two peaks exist and the gap between them is >= min_spike_gap,
+          the leftmost is a noise spike; T1 = valley between the two peaks.
+          Otherwise (ViT, or no real spike) T1 = min(log10(ev)).
+
+        T2 (mean of signal):
+          T2 = mean(log10(ev)) for all PCs with log10(ev) >= T1.
+
+        Selected PCs: T1 <= log10(ev) <= T2.
+        """
+        ev       = self.explained_variance.astype(np.float64)
+        log10_ev = np.log10(np.maximum(ev, 1e-30))
+        xmin, xmax = log10_ev.min(), log10_ev.max()
+
+        bin_width   = 0.15
+        bin_edges   = np.arange(xmin - bin_width, xmax + bin_width * 2, bin_width)
+        counts, _   = np.histogram(log10_ev, bins=bin_edges)
+        bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+
+        hist_peaks, _ = find_peaks(counts, prominence=10)
+        hist_peaks     = hist_peaks[np.argsort(bin_centers[hist_peaks])]
+
+        has_spike = False
+        T1 = float(xmin)
+
+        if len(hist_peaks) >= 2:
+            gap = bin_centers[hist_peaks[1]] - bin_centers[hist_peaks[0]]
+            print(f'[JointPCA][Clip] Histogram peaks at log10(ev): '
+                  f'{[round(float(bin_centers[p]), 2) for p in hist_peaks[:4]]}')
+            print(f'[JointPCA][Clip] Gap between peak 0 and peak 1: '
+                  f'{gap:.3f} (min_spike_gap={self.min_spike_gap})')
+            if gap >= self.min_spike_gap:
+                spike_peak    = hist_peaks[0]
+                search_end    = hist_peaks[1]
+                valley_region = counts[spike_peak: search_end + 1]
+                valley_idx    = spike_peak + int(np.argmin(valley_region))
+                T1            = float(bin_edges[valley_idx + 1])
+                has_spike     = True
+                print(f'[JointPCA][Clip] Spike confirmed -- '
+                      f'T1 (valley) = {T1:.4f}')
+            else:
+                print(f'[JointPCA][Clip] Peaks too close -- no spike, '
+                      f'T1 = leftmost = {T1:.4f}')
+        else:
+            print(f'[JointPCA][Clip] No spike detected -- '
+                  f'T1 = leftmost = {T1:.4f}')
+
+        log_ev_right = log10_ev[log10_ev >= T1]
+        T2 = float(np.mean(log_ev_right))
+
+        mask    = (log10_ev >= T1) & (log10_ev <= T2)
+        n_sel   = int(mask.sum())
+        n_spike = int((log10_ev < T1).sum())
+        n_right = int((log10_ev >= T1).sum())
+
+        print(f'[JointPCA][Clip] T1={T1:.4f}  T2={T2:.4f}')
+        print(f'[JointPCA][Clip] Spike PCs (<T1): {n_spike}  '
+              f'Signal PCs (>=T1): {n_right}  '
+              f'Selected [T1,T2]: {n_sel}')
+
+        if n_sel == 0:
+            raise RuntimeError(
+                '[JointPCA] No PCs selected by clip protocol. '
+                'Check eigenvalue spectrum.'
+            )
+
+        self.selected_mask = mask
+        self._save_spectrum_plot(
+            log10_ev, bin_centers, counts, hist_peaks,
+            T1, T2, has_spike, n_spike, n_sel
+        )
+
+    def _save_spectrum_plot(self, log10_ev, bin_centers, counts,
+                             hist_peaks, T1, T2, has_spike, n_spike, n_sel):
+        """
+        Save the log10(eigenvalue) spectrum to jointpca_cache/plots/ so
+        the user can visually verify that T1 and T2 are correctly placed.
+        Inspect this plot if results seem off -- adjust min_spike_gap if needed.
+        """
+        plot_dir = os.path.join(self.cache_dir, 'plots')
+        os.makedirs(plot_dir, exist_ok=True)
+        plot_path = os.path.join(plot_dir, f'spectrum_{self._config_fp}.png')
+
+        bin_width = bin_centers[1] - bin_centers[0] if len(bin_centers) > 1 else 0.15
+        xmin, xmax = float(log10_ev.min()), float(log10_ev.max())
+
+        fig, ax = plt.subplots(figsize=(11, 5))
+
+        ax.bar(bin_centers, counts, width=bin_width * 0.9,
+               alpha=0.5, color='steelblue', edgecolor='gray', linewidth=0.4,
+               label='Histogram of log₁₀(λ)')
+
+        ax.axvline(T1, color='red', lw=2.5, ls='-',
+                   label=f"T1 ({'valley/spike end' if has_spike else 'leftmost — no spike'}) = {T1:.3f}")
+        ax.axvline(T2, color='blue', lw=2.0, ls='--',
+                   label=f'T2 (mean of signal) = {T2:.3f}')
+
+        ax.axvspan(T1, T2, alpha=0.12, color='blue',
+                   label=f'Selected zone ({n_sel} PCs)')
+        if has_spike:
+            ax.axvspan(xmin - 0.5, T1, alpha=0.07, color='red',
+                       label=f'Noise spike ({n_spike} PCs, excluded)')
+
+        # Mark detected histogram peaks
+        for i, pk in enumerate(hist_peaks[:4]):
+            ax.axvline(bin_centers[pk], color='orange', lw=1.0, ls=':',
+                       label=f'Peak {i} = {bin_centers[pk]:.2f}' if i < 2 else None)
+
+        ax.set_xlabel('log₁₀(eigenvalue)', fontsize=11)
+        ax.set_ylabel('Count (per bin)', fontsize=11)
+        ax.set_title(
+            f'Eigenvalue spectrum — {self._config_fp}
+'
+            f'T1={T1:.3f}  T2={T2:.3f}  '
+            f'Selected (blue): {n_sel} PCs  '
+            f'Spike (red): {"detected" if has_spike else "not found"}  '
+            f'min_spike_gap={self.min_spike_gap}',
+            fontsize=9, fontweight='bold'
+        )
+        ax.legend(fontsize=8, loc='upper left')
+        ax.grid(True, alpha=0.2)
+
+        plt.tight_layout()
+        plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        print(f'[JointPCA][Clip] Spectrum plot saved: {plot_path}')
+        print(f'[JointPCA][Clip] Inspect this plot to verify T1/T2 placement. '
+              f'Adjust min_spike_gap in __init__ if needed (current={self.min_spike_gap}).')
+
+    # ------------------------------------------------------------------ #
+    # Mahalanobis scoring (on selected PCs only)                           #
     # ------------------------------------------------------------------ #
 
     def _mahalanobis_scores(self, features):
         """
-        Squared Mahalanobis distance from the ID class mean in PCA space.
+        Squared Mahalanobis distance using only the selected PCs (clip protocol).
 
-        score = sum_i  (y_i^2 / lambda_i)
+        score = sum_{i in selected} (y_i^2 / lambda_i)
 
-        where y_i = u_i^T (z - mu) is the projection onto the i-th PC and
-        lambda_i is the corresponding eigenvalue.  Higher score = more OOD.
+        where y_i = u_i^T (z - mu) and selected = PCs with T1 <= log10(ev) <= T2.
+        Higher score = more OOD.
         """
-        proj = (features - self.mean) @ self.components.T
-        var  = self.explained_variance.astype(np.float64) + 1e-10
+        sel_comps = self.components[self.selected_mask]          # (n_sel, D)
+        sel_ev    = self.explained_variance[self.selected_mask].astype(np.float64)
+        proj      = (np.asarray(features, dtype=np.float32) - self.mean) @ sel_comps.T
+        var       = sel_ev + 1e-10
         return np.sum((proj.astype(np.float64) ** 2) / var, axis=1)
 
     # ------------------------------------------------------------------ #
