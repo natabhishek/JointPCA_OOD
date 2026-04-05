@@ -2,7 +2,7 @@
 
 This repository contains the implementation of **JointPCA**, an out-of-distribution (OOD) detection postprocessor designed to plug into the [OpenOOD](https://github.com/Jingkang50/OpenOOD) benchmark framework.
 
-Supported backbones: **ResNet-50** and **ViT**.
+Supported backbones: **ResNet-50** and **ViT** .
 
 ## Files
 
@@ -20,11 +20,17 @@ Supported backbones: **ResNet-50** and **ViT**.
 
 **PCA.** Sklearn's randomised PCA is fit on up to `max_train_samples` ID training features using the full rank $K = \min(N, D)$. The fit is cached to disk after the first run.
 
-**Scoring.** Each test sample is scored with the squared Mahalanobis distance from the ID training mean in PCA space:
+**PC selection (clip-to-mean).** After PCA is fit, the log₁₀ eigenvalue spectrum is analysed to select a meaningful subset of PCs:
 
-$$\text{score}(z) = \sum_{i=1}^{K} \frac{y_i^2}{\lambda_i}, \quad y_i = u_i^\top (z - \mu)$$
+- **T1** (left boundary): a histogram of log₁₀(λ) is built and peaks are detected. For ResNet50, the leftmost peak is a noise spike separated from the signal by ≥ 5 log₁₀ units; T1 is set to the valley between them. For ViT, no such spike exists, so T1 = min(log₁₀(λ)).
+- **T2** (right boundary): mean of log₁₀(λ) for all PCs at or right of T1.
+- **Selected PCs**: those with T1 ≤ log₁₀(λ) ≤ T2.
 
-where $\lambda_i$ is the $i$-th eigenvalue. Higher score = more OOD.
+**Scoring.** Mahalanobis distance computed on the selected PCs only:
+
+$$\text{score}(z) = \sum_{i \in \text{selected}} \frac{y_i^2}{\lambda_i}, \quad y_i = u_i^\top (z - \mu)$$
+
+Higher score = more OOD.
 
 ---
 
@@ -168,19 +174,28 @@ All dependencies are already required by OpenOOD:
 
 All intermediate artefacts are stored as memory-mapped NumPy arrays under `./jointpca_cache/`:
 
+**Verifying T1/T2 placement.** Every time `setup()` runs, the spectrum plot is saved automatically to `plots/`. The default `min_spike_gap = 5.0` works correctly for both ResNet-50 (skips the noise spike on the far left) and ViT (no spike present, so T1 falls back to leftmost automatically) — try it as-is first. If the plot shows T1 cutting into signal PCs or missing the spike, adjust `self.min_spike_gap` in `__init__`. A larger value makes spike detection stricter; a smaller value makes it more permissive.
+
+Open the saved plot and check:
+- Red T1 line: sits at the valley between noise spike and signal (ResNet-50), or at the leftmost eigenvalue (ViT).
+- Blue dashed T2 line: sits near the centre of the signal distribution.
+- Blue shaded region: a reasonable signal band between T1 and T2.
+
 ```
 jointpca_cache/
   features/
-    features_train_{config_fp}.npy       # ID training features  (N, D)
-    features_{dataset}_{config_fp}.npy   # OOD / test features   (N, D)
+    features_train_{config_fp}.npy           # ID training features  (N, D)
+    features_{dataset}_{config_fp}.npy       # OOD / test features   (N, D)
   pca/
-    pca_{config_fp}.npz                  # mean, components, eigenvalues
+    pca_{config_fp}.npz                      # mean, components, eigenvalues
   projections/
-    projections_train_{config_fp}.npy    # train projections      (N, K)
+    projections_train_{config_fp}.npy        # train projections      (N, K)
   scores/
-    scores_{dataset}_{config_fp}_md.npz  # per-sample MD scores
+    scores_{dataset}_{config_fp}_clipmd.npz  # per-sample scores
   metadata/
-    metadata_{config_fp}.npz             # n_samples, n_features, layer_names
+    metadata_{config_fp}.npz                 # n_samples, n_features, layer_names
+  plots/
+    spectrum_{config_fp}.png                 # eigenvalue spectrum with T1/T2 marked
 ```
 
 The config fingerprint `{config_fp}` encodes the model class name and `max_train_samples`. Changing either value automatically triggers a fresh extraction and PCA fit. Delete individual cache files to force recomputation of a specific stage.
