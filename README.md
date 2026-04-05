@@ -20,7 +20,7 @@ Supported backbones: **ResNet-50** and **ViT** .
 
 **PCA.** Sklearn's randomised PCA is fit on up to `max_train_samples` ID training features using the full rank $K = \min(N, D)$. The fit is cached to disk after the first run.
 
-**PC selection (clip-to-mean).** Not all PCs are informative — the full spectrum contains both noisy components and diminishing-return signal. We automatically select a meaningful band using the log₁₀ eigenvalue spectrum. The left boundary **T1** excludes noise: for ResNet-50, the spectrum has a pronounced spike of low-variance noisy PCs on the far left, well separated from the signal; T1 is placed at the valley just after this spike, discarding those noisy components. For ViT no such spike exists, so T1 is simply the leftmost PC — nothing is excluded on the left. The right boundary **T2** is the mean of log₁₀(λ) over all PCs from T1 onwards, clipping away the long tail of very high-variance components that add noise without discriminative value. The selected PCs are those whose eigenvalue falls in the band T1 ≤ log₁₀(λ) ≤ T2. See *Verifying T1/T2 placement* in the Cache layout section for how to visually confirm the boundaries are correct.
+**PC selection (clip-to-mean).** Not all PCs are informative — the full spectrum contains both noisy components and diminishing-return signal. We automatically select a meaningful band using the log₁₀ eigenvalue spectrum. The left boundary **T1** excludes noise: for ResNet-50, the spectrum has a pronounced spike of low-variance noisy PCs on the far left, well separated from the signal; T1 is placed at the valley just after this spike, discarding those noisy components. For ViT no such spike exists, so T1 is simply the leftmost PC; nothing is excluded on the left. The right boundary **T2** is the mean of log₁₀(λ) over all PCs from T1 onwards, clipping away the long tail of very high-variance components that add noise without discriminative value. The selected PCs are those whose eigenvalue falls in the band T1 ≤ log₁₀(λ) ≤ T2. See *Verifying T1/T2 placement* in the Cache layout section for how to visually confirm the boundaries are correct.
 
 **Scoring.** Mahalanobis distance computed on the selected PCs only:
 
@@ -40,7 +40,9 @@ cd OpenOOD
 pip install -e .
 ```
 
-Follow the [OpenOOD README](https://github.com/Jingkang50/OpenOOD) to download the relevant benchmark datasets and obtain pre-trained checkpoints for **ResNet-50** and **ViT** on your target ID dataset (e.g. ImageNet-1K).
+**Datasets.** The OpenOOD README describes how to download benchmark datasets using the scripts in the `scripts/download/` folder of the repository. Follow the instructions there for ImageNet-1K and the associated OOD splits.
+
+**Model checkpoints.** OpenOOD provides pre-trained checkpoints downloadable via the scripts in `scripts/download/`. That said, checkpoints are flexible — you are not required to use OpenOOD's own weights. ResNet-50 weights can be loaded from torchvision (e.g. `torchvision.models.resnet50(pretrained=True)`), and ViT weights can be obtained from Hugging Face or timm. What matters is that the model was trained on your ID dataset (ImageNet-1K in our case) and that the checkpoint path is correctly set in your network config yml (e.g. `configs/networks/resnet50.yml`) or passed via `--network.checkpoint` on the command line.
 
 ### 2. Copy the postprocessor
 
@@ -87,28 +89,26 @@ JointPCA uses the standard OpenOOD `main.py` entry point. Combine your dataset c
 
 ```bash
 python main.py \
-  --config configs/datasets/imagenet/imagenet.yml \
-            configs/datasets/imagenet/imagenet_ood.yml \
-            configs/networks/resnet50.yml \
-            configs/pipelines/test/test_ood.yml \
-            configs/preprocessors/base_preprocessor.yml \
-            configs/postprocessors/jointpca.yml \
-  --network.checkpoint path/to/resnet50_imagenet1k.ckpt \
-  --network.pretrained True
+  --config \
+    configs/datasets/imagenet/imagenet.yml \
+    configs/datasets/imagenet/imagenet_ood.yml \
+    configs/networks/resnet50.yml \
+    configs/pipelines/test/test_ood.yml \
+    configs/postprocessors/jointpca.yml \
+    configs/preprocessors/base_preprocessor.yml
 ```
 
 **ViT on ImageNet-1K**
 
 ```bash
 python main.py \
-  --config configs/datasets/imagenet/imagenet.yml \
-            configs/datasets/imagenet/imagenet_ood.yml \
-            configs/networks/vit_b16.yml \
-            configs/pipelines/test/test_ood.yml \
-            configs/preprocessors/base_preprocessor.yml \
-            configs/postprocessors/jointpca.yml \
-  --network.checkpoint path/to/vit_b16_imagenet1k.ckpt \
-  --network.pretrained True
+  --config \
+    configs/datasets/imagenet/imagenet.yml \
+    configs/datasets/imagenet/imagenet_ood.yml \
+    configs/networks/vit_b16.yml \
+    configs/pipelines/test/test_ood.yml \
+    configs/postprocessors/jointpca.yml \
+    configs/preprocessors/base_preprocessor.yml
 ```
 
 The only parameter exposed in `jointpca.yml` is `max_train_samples`. The default is 45 000; reduce it if memory is limited.
@@ -117,6 +117,8 @@ The only parameter exposed in `jointpca.yml` is `max_train_samples`. The default
 postprocessor_args:
   max_train_samples: 45000   # adjust as needed
 ```
+
+**Checkpoint names.** The checkpoint path is read from your network config yml (e.g. `configs/networks/resnet50.yml`). You can also pass it on the command line with `--network.checkpoint results/checkpoints/your_filename.ckpt` — this simply overrides the yml and does no harm. Either way, the filename must match exactly what is on disk; OpenOOD does not search for partial matches, so a wrong name will cause a clean failure.
 
 ---
 
