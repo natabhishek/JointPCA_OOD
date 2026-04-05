@@ -2,7 +2,7 @@
 
 This repository contains the implementation of **JointPCA**, an out-of-distribution (OOD) detection postprocessor designed to plug into the [OpenOOD](https://github.com/Jingkang50/OpenOOD) benchmark framework.
 
-Supported backbones: **ResNet-50** and **ViT** .
+Supported backbones: **ResNet-50** and **ViT** (timm / torchvision).
 
 ## Files
 
@@ -20,11 +20,7 @@ Supported backbones: **ResNet-50** and **ViT** .
 
 **PCA.** Sklearn's randomised PCA is fit on up to `max_train_samples` ID training features using the full rank $K = \min(N, D)$. The fit is cached to disk after the first run.
 
-**PC selection (clip-to-mean).** After PCA is fit, the log₁₀ eigenvalue spectrum is analysed to select a meaningful subset of PCs:
-
-- **T1** (left boundary): a histogram of log₁₀(λ) is built and peaks are detected. For ResNet50, the leftmost peak is a noise spike separated from the signal by ≥ 5 log₁₀ units; T1 is set to the valley between them. For ViT, no such spike exists, so T1 = min(log₁₀(λ)).
-- **T2** (right boundary): mean of log₁₀(λ) for all PCs at or right of T1.
-- **Selected PCs**: those with T1 ≤ log₁₀(λ) ≤ T2.
+**PC selection (clip-to-mean).** Not all PCs are informative — the full spectrum contains both noisy components and diminishing-return signal. We automatically select a meaningful band using the log₁₀ eigenvalue spectrum. The left boundary **T1** excludes noise: for ResNet-50, the spectrum has a pronounced spike of low-variance noisy PCs on the far left, well separated from the signal; T1 is placed at the valley just after this spike, discarding those noisy components. For ViT no such spike exists, so T1 is simply the leftmost PC — nothing is excluded on the left. The right boundary **T2** is the mean of log₁₀(λ) over all PCs from T1 onwards, clipping away the long tail of very high-variance components that add noise without discriminative value. The selected PCs are those whose eigenvalue falls in the band T1 ≤ log₁₀(λ) ≤ T2. See *Verifying T1/T2 placement* in the Cache layout section for how to visually confirm the boundaries are correct.
 
 **Scoring.** Mahalanobis distance computed on the selected PCs only:
 
