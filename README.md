@@ -1,32 +1,68 @@
-# JointPCA — OOD Detection via Multi-Layer PCA
+# JointPCA — Out-of-Distribution Detection via Joint Multi-Layer PCA
 
-This repository contains the implementation of **JointPCA**, an out-of-distribution (OOD) detection postprocessor designed to plug into the [OpenOOD](https://github.com/Jingkang50/OpenOOD) benchmark framework.
+This repository contains the official implementation of **JointPCA**, submitted to NeurIPS 2025 (anonymous review).
 
-Supported backbones: **ResNet-50** and **ViT** .
+JointPCA is integrated directly into the [OpenOOD v1.5](https://github.com/Jingkang50/OpenOOD) benchmark framework, ensuring fully standardised and reproducible evaluation against all existing baselines.
 
-## Files
+---
 
-| File | Description |
-|---|---|
-| `jointpca_postprocessor.py` | Main postprocessor class |
-| `jointpca.yml` | Config file for the OpenOOD pipeline |
-| `README.md` | This file |
+## Results
+
+Evaluated using OpenOOD v1.5's standardised pipeline. All scores are AUROC (↑).
+
+| Backbone / ID dataset | Setting | All PCs | Filtered | Best OpenOOD baseline | OpenOOD method |
+|---|---|---|---|---|---|
+| ResNet-50 / ImageNet-1K | Near-OOD | 99.95 | **100** | 95.22 | CombOOD |
+| ResNet-50 / ImageNet-1K | Far-OOD | 99.98 | **100** | 97.55 | AdaSCALE-A |
+| ViT / ImageNet-1K | Near-OOD | 99.22 | **99.78** | 81.71 | RMDS++ |
+| ViT / ImageNet-1K | Far-OOD | 99.77 | **99.82** | 93.65 | MDS++ |
+| ResNet-18 / ImageNet-200 | Near-OOD | **100** | **100** | 95.74 | CombOOD |
+| ResNet-18 / ImageNet-200 | Far-OOD | **100** | **100** | 95.01 | ASH |
+| ResNet-18 / CIFAR-100 | Near-OOD | **100** | **100** | 88.30 | MSP |
+| ResNet-18 / CIFAR-100 | Far-OOD | **100** | **100** | 91.12 | MDS |
+| ResNet-18 / CIFAR-10 | Near-OOD | **100** | **100** | 94.86 | RotPred |
+| ResNet-18 / CIFAR-10 | Far-OOD | **100** | **100** | 98.18 | RotPred |
+
+Near-OOD datasets: SSB-hard, NINCO. Far-OOD datasets: iNaturalist, Textures, OpenImage-O.
+
+**All PCs** = full-spectrum Mahalanobis (primary method, no hyperparameters).  
+**Filtered** = spectral restriction to [T1, T2] using the participation ratio criterion (see DEVELOPMENT.md).
 
 ---
 
 ## Method
 
-**Feature extraction.** Forward hooks capture activations from multiple layers simultaneously. For ResNet-50, hooks are placed on all `Conv2d` layers, residual block outputs, and the penultimate layer; spatial maps are reduced via global average pooling. For ViT, hooks capture every encoder block output, split into the CLS token and a patch-GAP vector. All per-layer vectors are concatenated into a single joint feature.
+**Feature extraction.** Forward hooks capture activations from multiple layers simultaneously. For ResNet, hooks are placed on all Conv2d layers, residual block outputs, and the penultimate layer; spatial maps are pooled via global average pooling. For ViT, hooks capture every encoder block output, decomposed into the CLS token and a patch-GAP vector. All per-layer vectors are concatenated into a single joint feature `z(x)`.
 
-**PCA.** Sklearn's randomised PCA is fit on up to `max_train_samples` ID training features using the full rank $K = \min(N, D)$. The fit is cached to disk after the first run.
+**PCA.** Sklearn's randomised PCA is fit on up to `max_train_samples` ID training features. The full rank `K = min(N, D) - 1` is used. The fit is cached to disk after the first run.
 
-**PC selection (clip-to-mean).** Not all PCs are informative — the full spectrum contains both noisy components and diminishing-return signal. We automatically select a meaningful band using the log₁₀ eigenvalue spectrum. The left boundary **T1** excludes noise: for ResNet-50, the spectrum has a pronounced spike of low-variance noisy PCs on the far left, well separated from the signal; T1 is placed at the valley just after this spike, discarding those noisy components. For ViT no such spike exists, so T1 is simply the leftmost PC; nothing is excluded on the left. The right boundary **T2** is the mean of log₁₀(λ) over all PCs from T1 onwards, clipping away the long tail of very high-variance components that add noise without discriminative value. The selected PCs are those whose eigenvalue falls in the band T1 ≤ log₁₀(λ) ≤ T2. See *Verifying T1/T2 placement* in the Cache layout section for how to visually confirm the boundaries are correct.
+**Scoring.** A spectrally restricted Mahalanobis distance:
 
-**Scoring.** Mahalanobis distance computed on the selected PCs only:
+$$d^2(x) = \sum_{\alpha \in I} \frac{q_\alpha(x)^2}{\lambda_\alpha}, \qquad q_\alpha(x) = u_\alpha^\top (z(x) - \mu)$$
 
-$$\text{score}(z) = \sum_{i \in \text{selected}} \frac{y_i^2}{\lambda_i}, \quad y_i = u_i^\top (z - \mu)$$
+where $u_\alpha$, $\lambda_\alpha$ are PCA eigenvectors and eigenvalues, and $I$ is the selected spectral interval.
 
-Higher score = more OOD.
+**Primary variant (All PCs).** $I$ is the full spectrum. This is the main JointPCA method. No hyperparameters, no tuning.
+
+**Filtered variant.** $I = [T_1, T_2]$ where $T_1$ excludes noisy low-variance components (ResNet only) and $T_2$ is the eigenvalue of the PC with maximum *participation ratio* $\mathcal{N}_\alpha$ — the mode most broadly shared across layers. See DEVELOPMENT.md for the full protocol.
+
+---
+
+## Repository structure
+
+The only files you need from this repository are:
+
+```
+jointpca_postprocessor.py   — postprocessor class
+jointpca_utils.py           — pure utility functions (pooling, scoring, PC selection)
+jointpca.yml                — pipeline config
+```
+
+One existing OpenOOD file is modified (two lines added):
+
+```
+openood/postprocessors/__init__.py
+```
 
 ---
 
@@ -38,6 +74,143 @@ Higher score = more OOD.
 git clone https://github.com/Jingkang50/OpenOOD.git
 cd OpenOOD
 pip install -e .
+```
+
+**Datasets.** Follow the OpenOOD README to download benchmark datasets using the scripts in `scripts/download/`.
+
+**Checkpoints.** OpenOOD provides pre-trained checkpoints via `scripts/download/`. You can also use torchvision or timm weights — any checkpoint trained on the ID dataset works. Set the path in your network config yml or pass `--network.checkpoint <path>` on the command line.
+
+### 2. Copy the postprocessor files
+
+```bash
+cp jointpca_postprocessor.py openood/postprocessors/
+cp jointpca_utils.py         openood/postprocessors/
+cp jointpca.yml              configs/postprocessors/
+```
+
+### 3. Register JointPCA
+
+Open `openood/postprocessors/__init__.py` and add two lines:
+
+```python
+# At the top with the other imports:
+from .jointpca_postprocessor import JointPCAPostprocessor
+
+# Inside the postprocessors_dict:
+'jointpca': JointPCAPostprocessor,
+```
+
+---
+
+## Running
+
+JointPCA uses the standard OpenOOD `main.py` entry point.
+
+**ResNet-50 on ImageNet-1K — full spectrum (primary method)**
+
+```bash
+python main.py \
+  --config \
+    configs/datasets/imagenet/imagenet.yml \
+    configs/datasets/imagenet/imagenet_ood.yml \
+    configs/networks/resnet50.yml \
+    configs/pipelines/test/test_ood.yml \
+    configs/postprocessors/jointpca.yml \
+    configs/preprocessors/base_preprocessor.yml
+```
+
+**ResNet-18 on CIFAR-10**
+
+```bash
+python main.py \
+  --config \
+    configs/datasets/cifar10/cifar10.yml \
+    configs/datasets/cifar10/cifar10_ood.yml \
+    configs/networks/resnet18_32x32.yml \
+    configs/pipelines/test/test_ood.yml \
+    configs/postprocessors/jointpca.yml \
+    configs/preprocessors/base_preprocessor.yml
+```
+
+**ResNet-18 on CIFAR-100 / ImageNet-200**
+
+Replace the dataset and network configs accordingly (e.g. `cifar100.yml`, `imagenet200.yml`).
+
+**ViT on ImageNet-1K**
+
+```bash
+python main.py \
+  --config \
+    configs/datasets/imagenet/imagenet.yml \
+    configs/datasets/imagenet/imagenet_ood.yml \
+    configs/networks/vit_b16.yml \
+    configs/pipelines/test/test_ood.yml \
+    configs/postprocessors/jointpca.yml \
+    configs/preprocessors/base_preprocessor.yml
+```
+
+**Filtered variant**
+
+Set `filtered: true` in `configs/postprocessors/jointpca.yml` before running. A spectrum plot will be saved to `results/jointpca_cache/plots/` for verification. See DEVELOPMENT.md.
+
+---
+
+## Expected console output
+
+```
+[JointPCA] GPU: NVIDIA A100-SXM4-80GB
+[JointPCA] ResNet hooks registered: 54 layers
+[JointPCA] Feature dim: 102400  (54 layers)
+[JointPCA] Fitting PCA: N=45000, D=102400, K=44999
+[JointPCA] PCA done. Top-100 PCs explain 61.3% variance.
+[JointPCA] Full-spectrum variant: all 44999 PCs used
+[JointPCA] Setup complete.
+```
+
+On subsequent runs, cached artefacts load in seconds:
+
+```
+[JointPCA] ID train features cached: results/jointpca_cache/features/features_train_resnet50_45k.npy
+[JointPCA] PCA cached: results/jointpca_cache/pca/pca_resnet50_45k.npz
+[JointPCA] Setup complete.
+```
+
+---
+
+## Dependencies
+
+All dependencies are already required by OpenOOD:
+
+| Package | Purpose |
+|---|---|
+| `torch` | Model inference and hook API |
+| `scikit-learn` | Randomised PCA |
+| `numpy` | Memory-mapped feature storage |
+| `scipy` | Peak detection (filtered variant only) |
+| `tqdm` | Progress bars |
+| `matplotlib` | Spectrum plot (filtered variant only) |
+
+---
+
+## Cache layout
+
+All artefacts are stored under `results/jointpca_cache/`. The config fingerprint `{fp}` encodes the model class name and `max_train_samples`. Changing either value triggers fresh extraction and PCA fitting. Delete individual subdirectories to force recomputation of a specific stage.
+
+```
+results/jointpca_cache/
+  features/
+    features_train_{fp}.npy          ID training features   (N, D)
+    features_{dataset}_{fp}.npy      OOD / test features    (N, D)
+  pca/
+    pca_{fp}.npz                     mean, components, eigenvalues
+  scores/
+    scores_{dataset}_{fp}_full.npy       scores — full-spectrum variant
+    scores_{dataset}_{fp}_filtered.npy   scores — filtered variant
+  metadata/
+    metadata_{fp}.npz                n_samples, n_features, layer_names, layer_dims
+  plots/
+    spectrum_{fp}.png                eigenvalue spectrum with T1/T2 (filtered only)
+```pip install -e .
 ```
 
 **Datasets.** The OpenOOD README describes how to download benchmark datasets using the scripts in the `scripts/download/` folder of the repository. Follow the instructions there for ImageNet-1K and the associated OOD splits.
