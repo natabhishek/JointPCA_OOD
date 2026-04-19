@@ -65,9 +65,9 @@ pip install -e .
 ### 2. Copy the postprocessor files
 
 ```bash
-cp jointpca_postprocessor.py openood/postprocessors/
-cp jointpca_utils.py         openood/postprocessors/
-cp jointpca.yml              configs/postprocessors/
+cp jointpca_postprocessor.py openood/postprocessors/   # postprocessor class
+cp jointpca_utils.py         openood/postprocessors/   # pooling, scoring, PC selection
+cp jointpca.yml              configs/postprocessors/   # pipeline config
 ```
 
 ### 3. Register JointPCA
@@ -139,9 +139,7 @@ Set `filtered: true` in `configs/postprocessors/jointpca.yml` before running. A 
 
 ## Compute
 
-The PCA fitting step is the most memory-intensive part of the pipeline. For context, all experiments were run on a Mac Mini M4 Pro with 24 GB unified memory, without a GPU — the full pipeline ran successfully on CPU alone. GPU acceleration is supported when available and will speed up feature extraction significantly. Further details on runtime and memory usage are provided in the paper.
-
-The only parameter exposed in `jointpca.yml` is `max_train_samples` (default 45 000). Reduce this if memory is limited.
+All experiments were run on a Mac Mini M4 Pro with 24 GB unified memory, without a GPU. The largest configuration (ResNet-50, 45 000 training samples) produces a feature matrix of shape $45000 \times 102400$. Sklearn's randomised SVD operates on the Gram matrix $A^\top A$ of shape $45000 \times 45000$ rather than forming the full covariance, keeping memory tractable. Further runtime details are in the paper.
 
 ---
 
