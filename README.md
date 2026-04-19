@@ -139,7 +139,7 @@ Set `filtered: true` in `configs/postprocessors/jointpca.yml` before running. A 
 
 ## Compute
 
-All experiments were run on a Mac Mini M4 Pro with 24 GB unified memory, without a GPU. The largest configuration (ResNet-50, 45 000 training samples) produces a feature matrix of shape $45000 \times 102400$. Sklearn's randomised SVD operates on the Gram matrix $A^\top A$ of shape $45000 \times 45000$ rather than forming the full covariance, keeping memory tractable. Further runtime details are in the paper.
+All experiments were run on a Mac Mini M4 Pro with 24 GB unified memory, without a GPU. The largest configuration (ResNet-50, 45 000 training samples) produces a feature matrix of shape $45000 \times 43712$. Sklearn's randomised SVD operates on the Gram matrix $A^\top A$ of shape $43712 \times 43712$ rather than forming the full covariance, keeping memory tractable. Further runtime details are in the paper.
 
 ---
 
