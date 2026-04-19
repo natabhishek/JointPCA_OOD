@@ -57,7 +57,7 @@ This is the eigenvalue of the single PC most broadly shared across all layers. T
 Every run with `filtered: true` saves a two-panel plot to `results/jointpca_cache/plots/spectrum_{fp}.png`:
 
 - **Top panel:** $\log_{10}(\lambda)$ histogram with T1 (red solid), T2 (blue dashed), and the selected zone (blue shaded).
-- **Bottom panel:** $\mathcal{N}_\alpha$ per PC plotted against $\log_{10}(\lambda_\alpha)$, with the argmax marked.
+- **Bottom panel:** $\mathcal{N}_\alpha per PC plotted against $\log_{10}(\lambda_\alpha)$, with the argmax marked.
 
 Check that:
 1. The red T1 line sits at the valley between noise spike and signal (ResNet), or at the leftmost eigenvalue (ViT).
