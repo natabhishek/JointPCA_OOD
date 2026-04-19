@@ -1,8 +1,21 @@
 postprocessor:
   name: jointpca
   APS_mode: False
+
   postprocessor_args:
+
     # Maximum number of ID training samples used to fit PCA.
-    # Increase for better coverage; decrease to save memory.
     max_train_samples: 45000
+
+    # Variant selection
+    # ------------------
+    # false (default): Full-spectrum Mahalanobis over all PCs.
+    #                  This is the primary JointPCA method.
+    # true           : Spectral restriction to [T1, T2].
+    #                  T1 = noise-spike cutoff (see DEVELOPMENT.md).
+    #                  T2 = eigenvalue of the PC with maximum
+    #                       participation ratio N_alpha.
+    #                  Generates a spectrum plot in results/jointpca_cache/plots/.
+    filtered: false
+
   postprocessor_sweep: {}
