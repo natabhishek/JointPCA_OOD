@@ -190,16 +190,11 @@ mkdir -p checkpoints
 wget https://download.pytorch.org/models/vit_b_16-c867db91.pth -O checkpoints/vit_b_16-c867db91.pth
 ```
 
-Edit `configs/networks/vit_b16.yml` — update the checkpoint path and image size:
+Edit `configs/networks/vit-b-16.yml` — update the checkpoint path and image size. The `name` field must be exactly `vit-b-16` to match the string OpenOOD's `get_network()` checks for internally:
 
 ```yaml
+name: vit-b-16
 checkpoint: ./checkpoints/vit_b_16-c867db91.pth
-image_size: 224
-```
-
-Also update the image size in `configs/datasets/imagenet/imagenet_ood.yml` (or whichever OOD config you use) to match:
-
-```yaml
 image_size: 224
 ```
 
@@ -210,7 +205,7 @@ python main.py \
   --config \
     configs/datasets/imagenet/imagenet.yml \
     configs/datasets/imagenet/imagenet_ood.yml \
-    configs/networks/vit_b16.yml \
+    configs/networks/vit-b-16.yml \
     configs/pipelines/test/test_ood.yml \
     configs/preprocessors/base_preprocessor.yml \
     configs/postprocessors/jointpca.yml \
