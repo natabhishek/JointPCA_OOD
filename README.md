@@ -92,18 +92,26 @@ from .jointpca_postprocessor import JointPCAPostprocessor
 
 JointPCA uses the standard OpenOOD `main.py` entry point.
 
-**ResNet-50 on ImageNet-1K — full spectrum (primary method)**
+**CPU-only machines.** Add `map_location='cpu'` to the three `torch.load` calls in `openood/networks/utils.py`:
+
+```python
+# 1. Inside the dict/list checkpoint loop:
+subnet.load_state_dict(torch.load(checkpoint, map_location='cpu'), strict=False)
+
+# 2. Main load block:
+net.load_state_dict(torch.load(network_config.checkpoint, map_location='cpu'), strict=False)
+
+# 3. Retry block after RuntimeError:
+loaded_pth = torch.load(network_config.checkpoint, map_location='cpu')
+```
+
+The commands below use the standard OpenOOD v1.5 checkpoints. Download them first:
 
 ```bash
-python main.py \
-  --config \
-    configs/datasets/imagenet/imagenet.yml \
-    configs/datasets/imagenet/imagenet_ood.yml \
-    configs/networks/resnet50.yml \
-    configs/pipelines/test/test_ood.yml \
-    configs/postprocessors/jointpca.yml \
-    configs/preprocessors/base_preprocessor.yml
+python scripts/download/download.py --contents checkpoints --checkpoints ood_v1.5
 ```
+
+---
 
 **ResNet-18 on CIFAR-10**
 
@@ -114,15 +122,88 @@ python main.py \
     configs/datasets/cifar10/cifar10_ood.yml \
     configs/networks/resnet18_32x32.yml \
     configs/pipelines/test/test_ood.yml \
+    configs/preprocessors/base_preprocessor.yml \
     configs/postprocessors/jointpca.yml \
-    configs/preprocessors/base_preprocessor.yml
+  --network.checkpoint results/cifar10_resnet18_32x32_base_e100_lr0.1_default/s1/last_epoch100_acc0.9490.ckpt \
+  --num_gpus 0
 ```
 
-**ResNet-18 on CIFAR-100 / ImageNet-200**
+**ResNet-18 on CIFAR-100**
 
-Replace the dataset and network configs accordingly (e.g. `cifar100.yml`, `imagenet200.yml`).
+```bash
+python main.py \
+  --config \
+    configs/datasets/cifar100/cifar100.yml \
+    configs/datasets/cifar100/cifar100_ood.yml \
+    configs/networks/resnet18_32x32.yml \
+    configs/pipelines/test/test_ood.yml \
+    configs/preprocessors/base_preprocessor.yml \
+    configs/postprocessors/jointpca.yml \
+  --network.checkpoint results/cifar100_resnet18_32x32_base_e100_lr0.1_default/s1/last_epoch100_acc0.7710.ckpt \
+  --num_gpus 0
+```
+
+**ResNet-18 on ImageNet-200**
+
+```bash
+python main.py \
+  --config \
+    configs/datasets/imagenet200/imagenet200.yml \
+    configs/datasets/imagenet200/imagenet200_ood.yml \
+    configs/networks/resnet18_224x224.yml \
+    configs/pipelines/test/test_ood.yml \
+    configs/preprocessors/base_preprocessor.yml \
+    configs/postprocessors/jointpca.yml \
+  --network.checkpoint results/imagenet200_resnet18_224x224_base_e90_lr0.1_default/s1/last_epoch90_acc0.8530.ckpt \
+  --num_gpus 0
+```
+
+**ResNet-50 on ImageNet-1K**
+
+Download the torchvision pretrained checkpoint first:
+
+```bash
+mkdir -p checkpoints
+wget https://download.pytorch.org/models/resnet50-0676ba61.pth -O checkpoints/resnet50-0676ba61.pth
+```
+
+The network config (`configs/networks/resnet50.yml`) already points to this path — no `--network.checkpoint` flag needed:
+
+```bash
+python main.py \
+  --config \
+    configs/datasets/imagenet/imagenet.yml \
+    configs/datasets/imagenet/imagenet_ood.yml \
+    configs/networks/resnet50.yml \
+    configs/pipelines/test/test_ood.yml \
+    configs/preprocessors/base_preprocessor.yml \
+    configs/postprocessors/jointpca.yml \
+  --num_gpus 0
+```
 
 **ViT on ImageNet-1K**
+
+For fair comparison with the OpenOOD leaderboard, we use the standard torchvision ViT-B/16 checkpoint trained at image size 224. Download it:
+
+```bash
+mkdir -p checkpoints
+wget https://download.pytorch.org/models/vit_b_16-c867db91.pth -O checkpoints/vit_b_16-c867db91.pth
+```
+
+Edit `configs/networks/vit_b16.yml` — update the checkpoint path and image size:
+
+```yaml
+checkpoint: ./checkpoints/vit_b_16-c867db91.pth
+image_size: 224
+```
+
+Also update the image size in `configs/datasets/imagenet/imagenet_ood.yml` (or whichever OOD config you use) to match:
+
+```yaml
+image_size: 224
+```
+
+Then run:
 
 ```bash
 python main.py \
@@ -131,13 +212,14 @@ python main.py \
     configs/datasets/imagenet/imagenet_ood.yml \
     configs/networks/vit_b16.yml \
     configs/pipelines/test/test_ood.yml \
+    configs/preprocessors/base_preprocessor.yml \
     configs/postprocessors/jointpca.yml \
-    configs/preprocessors/base_preprocessor.yml
+  --num_gpus 0
 ```
 
 **Filtered variant**
 
-Set `filtered: true` in `configs/postprocessors/jointpca.yml` before running. A spectrum plot will be saved to `results/jointpca_cache/plots/` for verification. See DEVELOPMENT.md.
+Set `filtered: true` in `configs/postprocessors/jointpca.yml` before running any of the above. A spectrum plot will be saved to `results/jointpca_cache/plots/` for verification. See DEVELOPMENT.md.
 
 ---
 
