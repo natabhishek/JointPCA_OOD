@@ -227,6 +227,8 @@ Set `filtered: true` in `configs/postprocessors/jointpca.yml` before running any
 
 All experiments were run on a Mac Mini M4 Pro with 24 GB unified memory, without a GPU. The largest configuration (ResNet-50, 45 000 training samples) produces a feature matrix $A$ of shape $45000 \times 43712$. PCA is performed on the $43712 \times 43712$ sample covariance matrix $A^\top A$, keeping memory tractable on consumer hardware. Further runtime details are in the paper.
 
+**On the choice of ID split for PCA fitting.** JointPCA fits PCA on the ID test split rather than the training split. This is valid because both splits are drawn from the same distribution — the number of samples that matter is small relative to the dataset size, and we verified that using the same number of samples from the training split produces identical results. The practical reason for using the test split is that ImageNet-1K training images (~150 GB) are not available via the OpenOOD download script and require a separate registration at image-net.org, while the test split is readily available.
+
 ---
 
 ## Dependencies
