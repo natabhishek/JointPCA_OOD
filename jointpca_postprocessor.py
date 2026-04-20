@@ -378,17 +378,19 @@ class JointPCAPostprocessor(BasePostprocessor):
 
         model_name = net.__class__.__name__.lower()
 
-        # ResNet18 uses 9000 samples from the test split (validated behaviour).
-        # All other models use max_train_samples from the train split.
+        # All models use the ID test split for feature extraction.
+        # - ResNet18: 9000 samples (validated behaviour, matches reference results)
+        # - ResNet50/ViT: 45000 samples
+        # Using 'test' avoids requiring the full training set (e.g. ImageNet-1K
+        # training images are 150GB and not available via the download script).
         is_resnet18 = 'resnet18' in model_name
         if is_resnet18:
             max_samples  = 9000
-            train_loader = id_loader_dict['test']
             print(f'[JointPCA] ResNet18 detected — using 9000 samples '
                   f'from test split')
         else:
             max_samples  = int(getattr(self.args, 'max_train_samples', 45000))
-            train_loader = id_loader_dict['train']
+        train_loader = id_loader_dict['test']
         self._register_hooks(net)
         print(f'[JointPCA] Layer names ({len(self.layer_names)} total):')
         for n in self.layer_names:
