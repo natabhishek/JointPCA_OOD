@@ -58,9 +58,7 @@ cd OpenOOD
 pip install -e .
 ```
 
-**Datasets.** Follow the OpenOOD README to download benchmark datasets using the scripts in `scripts/download/`.
-
-**Checkpoints.** OpenOOD provides pre-trained checkpoints via `scripts/download/`. You can also use torchvision or timm weights — any checkpoint trained on the ID dataset works. Set the path in your network config yml or pass `--network.checkpoint <path>` on the command line.
+Follow the OpenOOD README to download benchmark datasets and pre-trained checkpoints using the scripts in `scripts/download/`. For ViT on ImageNet-1K, download a ViT-B/16 checkpoint pretrained on ImageNet-1K separately (e.g. from [timm](https://github.com/huggingface/pytorch-image-models) or Hugging Face) and place it in `results/checkpoints/`.
 
 ### 2. Copy the postprocessor files
 
@@ -145,7 +143,7 @@ Set `filtered: true` in `configs/postprocessors/jointpca.yml` before running. A 
 
 ## Compute
 
-All experiments were run on a Mac Mini M4 Pro with 24 GB unified memory, without a GPU. The largest configuration (ResNet-50, 45 000 training samples) produces a feature matrix of shape $45000 \times 102400$. Sklearn's randomised SVD operates on the Gram matrix $A^\top A$ of shape $45000 \times 45000$ rather than forming the full covariance, keeping memory tractable. Further runtime details are in the paper.
+All experiments were run on a Mac Mini M4 Pro with 24 GB unified memory, without a GPU. The largest configuration (ResNet-50, 45 000 training samples) produces a feature matrix $A$ of shape $45000 \times 43712$. PCA is performed on the $43712 \times 43712$ sample covariance matrix $A^\top A$, keeping memory tractable on consumer hardware. Further runtime details are in the paper.
 
 ---
 
