@@ -92,6 +92,10 @@ class JointPCAPostprocessor(BasePostprocessor):
         self.hooks          = []
         self.activations    = {}
         self.setup_flag     = False
+        # ID dataset name for cache fingerprint (e.g. cifar10, imagenet)
+        self._id_dataset    = getattr(
+            getattr(self.config, 'dataset', None), 'name', 'unknown'
+        )
 
     # ================================================================== #
     # Cache helpers                                                        #
@@ -102,28 +106,49 @@ class JointPCAPostprocessor(BasePostprocessor):
             os.makedirs(os.path.join(self.cache_dir, sub), exist_ok=True)
 
     @staticmethod
-    def _make_config_fp(model_name, max_samples):
+    def _make_config_fp(model_name, id_dataset, max_samples):
+        """
+        Build a cache fingerprint that encodes all info needed to identify
+        the artefact unambiguously.
+
+        Pattern: {model}_{dataset}_allconv_gap_{samples}
+        Example: resnet18_32x32_cifar10_allconv_gap_9k
+                 resnet50_imagenet_allconv_gap_45k
+        """
         s = f'{max_samples // 1000}k' if max_samples >= 1000 else str(max_samples)
-        return f'{model_name}_{s}'
+        # Shorten common dataset names for readability
+        ds = (id_dataset
+              .replace('imagenet200', 'in200')
+              .replace('imagenet', 'in1k')
+              .replace('cifar10', 'c10')
+              .replace('cifar100', 'c100'))
+        return f'{model_name}_{ds}_allconv_gap_{s}'
 
     def _p(self, subdir, name):
         return os.path.join(self.cache_dir, subdir, name)
 
     def _path_feat_train(self):
-        return self._p('features', f'features_train_{self._config_fp}.npy')
+        # filename: features_{model}_{dataset}_allconv_gap_{samples}_train.npy
+        return self._p('features', f'features_{self._config_fp}_train.npy')
 
-    def _path_feat_ood(self, dataset):
-        return self._p('features', f'features_{dataset}_{self._config_fp}.npy')
+    def _path_feat_ood(self, ood_dataset):
+        # filename: features_{id_dataset}_tested_on_{ood_dataset}_{fp}.npy
+        return self._p('features',
+                       f'features_{self._config_fp}_test_{ood_dataset}.npy')
 
     def _path_meta(self):
-        return self._p('metadata', f'metadata_{self._config_fp}.npz')
+        return self._p('metadata', f'meta_{self._config_fp}.npz')
 
     def _path_pca(self):
         return self._p('pca', f'pca_{self._config_fp}.npz')
 
-    def _path_scores(self, dataset):
+    def _path_proj(self):
+        return self._p('projections', f'proj_{self._config_fp}_train.npy')
+
+    def _path_scores(self, ood_dataset):
         suffix = 'filtered' if self.filtered else 'full'
-        return self._p('scores', f'scores_{dataset}_{self._config_fp}_{suffix}.npz')
+        return self._p('scores',
+                       f'scores_{self._config_fp}_test_{ood_dataset}_{suffix}.npz')
 
     @staticmethod
     def _mmap_write(path, shape, dtype=np.float32):
@@ -351,16 +376,25 @@ class JointPCAPostprocessor(BasePostprocessor):
         net.eval()
         net = net.to(self.device)
 
-        model_name  = net.__class__.__name__.lower()
-        max_samples = int(getattr(self.args, 'max_train_samples', 45000))
+        model_name = net.__class__.__name__.lower()
 
+        # ResNet18 uses 9000 samples from the test split (validated behaviour).
+        # All other models use max_train_samples from the train split.
+        is_resnet18 = 'resnet18' in model_name
+        if is_resnet18:
+            max_samples  = 9000
+            train_loader = id_loader_dict['test']
+            print(f'[JointPCA] ResNet18 detected — using 9000 samples '
+                  f'from test split')
+        else:
+            max_samples  = int(getattr(self.args, 'max_train_samples', 45000))
+            train_loader = id_loader_dict['train']
         self._register_hooks(net)
         print(f'[JointPCA] Layer names ({len(self.layer_names)} total):')
         for n in self.layer_names:
             print(f'  {n}')
 
         # ── 1. Probe feature dimension + per-layer dims ─────────────── #
-        train_loader = id_loader_dict['train']
         for batch in train_loader:
             data = batch['data'] if isinstance(batch, dict) else batch[0]
             with torch.no_grad():
@@ -375,7 +409,9 @@ class JointPCAPostprocessor(BasePostprocessor):
             self.activations = {}
             break
 
-        self._config_fp = self._make_config_fp(model_name, max_samples)
+        self._config_fp = self._make_config_fp(
+            model_name, self._id_dataset, max_samples
+        )
         print(f'[JointPCA] Config FP  : {self._config_fp}')
         print(f'[JointPCA] Feature dim: {feat_dim}  '
               f'({len(self.layer_names)} layers)')
