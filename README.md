@@ -1,8 +1,8 @@
-# JointPCA — Out-of-Distribution Detection via Joint Multi-Layer PCA
+# Joint-PCA: Post-Hoc Out-of-Distribution Detection from Joint Representations
 
-This repository contains the official implementation of **JointPCA**, submitted to NeurIPS 2026 (anonymous review).
+This repository contains the official implementation of **Joint-PCA**, submitted to NeurIPS 2026 (anonymous review).
 
-JointPCA is integrated directly into the [OpenOOD v1.5](https://github.com/Jingkang50/OpenOOD) benchmark framework, ensuring fully standardised and reproducible evaluation against all existing baselines.
+Joint-PCA is integrated directly into the [OpenOOD v1.5](https://github.com/Jingkang50/OpenOOD) benchmark framework, ensuring fully standardised and reproducible evaluation against all existing baselines.
 
 ---
 
@@ -10,23 +10,20 @@ JointPCA is integrated directly into the [OpenOOD v1.5](https://github.com/Jingk
 
 Evaluated using OpenOOD v1.5's standardised pipeline. All scores are AUROC (↑).
 
-| Backbone / ID dataset | Setting | All PCs | Filtered | Best OpenOOD baseline | OpenOOD method |
-|---|---|---|---|---|---|
-| ResNet-50 / ImageNet-1K | Near-OOD | 99.95 | **100** | 95.22 | CombOOD |
-| ResNet-50 / ImageNet-1K | Far-OOD | 99.98 | **100** | 97.55 | AdaSCALE-A |
-| ViT / ImageNet-1K | Near-OOD | 99.22 | **99.78** | 81.71 | RMDS++ |
-| ViT / ImageNet-1K | Far-OOD | 99.77 | **99.82** | 93.65 | MDS++ |
-| ResNet-18 / ImageNet-200 | Near-OOD | **100** | **100** | 95.74 | CombOOD |
-| ResNet-18 / ImageNet-200 | Far-OOD | **100** | **100** | 95.01 | ASH |
-| ResNet-18 / CIFAR-100 | Near-OOD | **100** | **100** | 88.30 | MSP |
-| ResNet-18 / CIFAR-100 | Far-OOD | **100** | **100** | 91.12 | MDS |
-| ResNet-18 / CIFAR-10 | Near-OOD | **100** | **100** | 94.86 | RotPred |
-| ResNet-18 / CIFAR-10 | Far-OOD | **100** | **100** | 98.18 | RotPred |
+| Backbone / ID dataset | Setting | All PCs | Best OpenOOD baseline | OpenOOD method |
+|---|---|---|---|---|
+| ResNet-50 / ImageNet-1K | Near-OOD | 99.95 | 95.22 | CombOOD |
+| ResNet-50 / ImageNet-1K | Far-OOD | 99.98 | 97.55 | AdaSCALE-A |
+| ViT / ImageNet-1K | Near-OOD | 99.22 | 81.71 | RMDS++ |
+| ViT / ImageNet-1K | Far-OOD | 99.77 | 93.65 | MDS++ |
+| ResNet-18 / ImageNet-200 | Near-OOD | **100** | 95.74 | CombOOD |
+| ResNet-18 / ImageNet-200 | Far-OOD | **100** | 95.01 | ASH |
+| ResNet-18 / CIFAR-100 | Near-OOD | **100** | 88.30 | MSP |
+| ResNet-18 / CIFAR-100 | Far-OOD | **100** | 91.12 | MDS |
+| ResNet-18 / CIFAR-10 | Near-OOD | **100** | 94.86 | RotPred |
+| ResNet-18 / CIFAR-10 | Far-OOD | **100** | 98.18 | RotPred |
 
 Near-OOD and Far-OOD dataset splits follow the OpenOOD v1.5 benchmark definitions for each ID dataset. Full details are provided in the paper.
-
-**All PCs** = full-spectrum Mahalanobis (primary method, no hyperparameters).  
-**Filtered** = spectral restriction to [T1, T2] using the participation ratio criterion (see DEVELOPMENT.md).
 
 ---
 
@@ -36,15 +33,11 @@ Near-OOD and Far-OOD dataset splits follow the OpenOOD v1.5 benchmark definition
 
 **PCA.** Sklearn's randomised PCA is fit on up to `max_train_samples` ID training features. The full rank `K = min(N, D) - 1` is used. The fit is cached to disk after the first run.
 
-**Scoring.** A spectrally restricted Mahalanobis distance:
+**Scoring.** Mahalanobis distance in PCA space over the full spectrum:
 
-$$d^2(x) = \sum_{\alpha \in I} \frac{q_\alpha(x)^2}{\lambda_\alpha}, \qquad q_\alpha(x) = u_\alpha^\top (z(x) - \mu)$$
+$$d^2(x) = \sum_{\alpha} \frac{q_\alpha(x)^2}{\lambda_\alpha}, \qquad q_\alpha(x) = u_\alpha^\top (z(x) - \mu)$$
 
-where $u_\alpha$, $\lambda_\alpha$ are PCA eigenvectors and eigenvalues, and $I$ is the selected spectral interval.
-
-**Primary variant (All PCs).** $I$ is the full spectrum. This is the main JointPCA method. No hyperparameters, no tuning.
-
-**Filtered variant.** $I = [T_1, T_2]$ where $T_1$ excludes noisy low-variance components (ResNet only) and $T_2$ is the eigenvalue of the PC with maximum *participation ratio* $\mathcal{N}_\alpha$ — the mode most broadly shared across layers. See DEVELOPMENT.md for the full protocol.
+where $u_\alpha$, $\lambda_\alpha$ are PCA eigenvectors and eigenvalues. No hyperparameters, no tuning.
 
 ---
 
@@ -212,9 +205,7 @@ python main.py \
   --num_gpus 0
 ```
 
-**Filtered variant**
-
-Set `filtered: true` in `configs/postprocessors/jointpca.yml` before running any of the above. A spectrum plot will be saved to `results/jointpca_cache/plots/` for verification. See DEVELOPMENT.md.
+Set `filtered: false` in `configs/postprocessors/jointpca.yml` (default).
 
 ---
 
@@ -235,9 +226,7 @@ All dependencies are already required by OpenOOD:
 | `torch` | Model inference and hook API |
 | `scikit-learn` | Randomised PCA |
 | `numpy` | Memory-mapped feature storage |
-| `scipy` | Peak detection (filtered variant only) |
 | `tqdm` | Progress bars |
-| `matplotlib` | Spectrum plot (filtered variant only) |
 
 ---
 
@@ -249,7 +238,6 @@ All intermediate artefacts (features, PCA, projections, scores) are stored under
 results/jointpca_cache/
   features/     ID training and OOD test features
   pca/          mean, components, eigenvalues
-  scores/       per-sample scores (full and filtered variants stored separately)
+  scores/       per-sample OOD scores
   metadata/     n_samples, n_features, layer_names, layer_dims
-  plots/        eigenvalue spectrum with T1/T2 marked (filtered variant only)
 ```
