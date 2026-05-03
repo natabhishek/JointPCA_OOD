@@ -205,8 +205,6 @@ python main.py \
   --num_gpus 0
 ```
 
-Set `filtered: false` in `configs/postprocessors/jointpca.yml` (default).
-
 ---
 
 ## Compute
