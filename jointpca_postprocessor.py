@@ -1,8 +1,10 @@
 """
-JointPCA OOD Detection Postprocessor for OpenOOD
--------------------------------------------------
+Joint-PCA OOD Detection Postprocessor for OpenOOD
+--------------------------------------------------
+Post-hoc out-of-distribution detection from joint representations.
+
 Extracts multi-layer activations via forward hooks, concatenates them into
-a joint feature vector, fits PCA, and scores test samples via a spectrally
+a joint feature vector, fits PCA, and scores test samples via a
 restricted Mahalanobis distance.
 
 Two variants are exposed via the `filtered` flag in jointpca.yml:
