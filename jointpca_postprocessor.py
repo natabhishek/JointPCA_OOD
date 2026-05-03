@@ -4,21 +4,8 @@ Joint-PCA OOD Detection Postprocessor for OpenOOD
 Post-hoc out-of-distribution detection from joint representations.
 
 Extracts multi-layer activations via forward hooks, concatenates them into
-a joint feature vector, fits PCA, and scores test samples via a
-restricted Mahalanobis distance.
-
-Two variants are exposed via the `filtered` flag in jointpca.yml:
-
-  filtered: false  (default)
-    Full-spectrum Mahalanobis over all PCs. This is the primary JointPCA
-    method and the one reported in the main results table.
-
-  filtered: true
-    Spectral restriction to the interval [T1, T2]:
-      T1  noise-spike cutoff (ResNet: valley after left spike; ViT: leftmost)
-      T2  eigenvalue of the PC with maximum participation ratio N_alpha,
-          i.e. the mode most broadly shared across layers.
-    See DEVELOPMENT.md for a full description of the filtering protocol.
+a joint feature vector, fits PCA, and scores test samples via full-spectrum
+Mahalanobis distance.
 
 Layer strategy:
   ResNet : all Conv2d layers + residual block outputs + penultimate layer
@@ -46,11 +33,7 @@ from tqdm import tqdm
 from .base_postprocessor import BasePostprocessor
 from .jointpca_utils import (
     pool_activation,
-    compute_layer_dims,
-    compute_participation_ratios,
-    select_pcs,
     mahalanobis_scores,
-    save_spectrum_plot,
 )
 
 
@@ -67,10 +50,6 @@ class JointPCAPostprocessor(BasePostprocessor):
 
         self.args_dict = getattr(config.postprocessor, 'postprocessor_sweep', {})
 
-        # filtered=false → full spectrum (primary method)
-        # filtered=true  → spectral restriction via T1/T2
-        self.filtered = bool(getattr(self.args, 'filtered', False))
-
         # ── Device ──────────────────────────────────────────────────── #
         if torch.cuda.is_available():
             self.device = torch.device('cuda')
@@ -83,11 +62,8 @@ class JointPCAPostprocessor(BasePostprocessor):
         self.mean               = None   # (D,)
         self.components         = None   # (K, D)
         self.explained_variance = None   # (K,)
-        self.selected_mask      = None   # (K,) bool, only used when filtered=True
-        self.layer_dims         = None   # list[int], per-layer feature widths
 
         # ── Internal state ───────────────────────────────────────────── #
-        self.min_spike_gap  = 5.0        # see DEVELOPMENT.md
         self._config_fp     = None
         self.cache_dir      = os.path.join('results', 'jointpca_cache')
         self.layer_names    = []
@@ -148,9 +124,8 @@ class JointPCAPostprocessor(BasePostprocessor):
         return self._p('projections', f'proj_{self._config_fp}_train.npy')
 
     def _path_scores(self, ood_dataset):
-        suffix = 'filtered' if self.filtered else 'full'
         return self._p('scores',
-                       f'scores_{self._config_fp}_test_{ood_dataset}_{suffix}.npz')
+                       f'scores_{self._config_fp}_test_{ood_dataset}.npz')
 
     @staticmethod
     def _mmap_write(path, shape, dtype=np.float32):
@@ -403,13 +378,11 @@ class JointPCAPostprocessor(BasePostprocessor):
             data = batch['data'] if isinstance(batch, dict) else batch[0]
             with torch.no_grad():
                 net(data.to(self.device))
-            # collect per-layer dims before clearing activations
-            self.layer_dims = [
+            feat_dim = sum(
                 pool_activation(self.activations[n]).shape[1]
                 for n in self.layer_names
                 if n in self.activations
-            ]
-            feat_dim = sum(self.layer_dims)
+            )
             self.activations = {}
             break
 
@@ -443,15 +416,11 @@ class JointPCAPostprocessor(BasePostprocessor):
                 max_samples, feat_dim, 'ID train features'
             )
             np.savez(self._path_meta(), n_samples=n, n_features=feat_dim,
-                     layer_names=np.array(self.layer_names, dtype=object),
-                     layer_dims=np.array(self.layer_dims, dtype=np.int64))
+                     layer_names=np.array(self.layer_names, dtype=object))
             print(f'[JointPCA] Saved ({n}, {feat_dim})')
 
         meta           = np.load(self._path_meta(), allow_pickle=True)
         actual_n_train = int(meta['n_samples'])
-        # restore layer_dims from cache in case this is a cached run
-        if 'layer_dims' in meta:
-            self.layer_dims = list(meta['layer_dims'].astype(int))
         train_features = self._mmap_read(self._path_feat_train())[:actual_n_train]
 
         # ── 3. n_components ─────────────────────────────────────────── #
@@ -487,26 +456,8 @@ class JointPCAPostprocessor(BasePostprocessor):
                      explained_variance_ratio=ev_ratio)
             print(f'[JointPCA] PCA saved: {pca_path}')
 
-        # ── 5. PC selection for filtered variant ─────────────────────── #
-        if self.filtered:
-            pr = compute_participation_ratios(self.components, self.layer_dims)
-            self.selected_mask = select_pcs(
-                explained_variance  = self.explained_variance,
-                participation_ratio = pr,
-                min_spike_gap       = self.min_spike_gap,
-                plot_path           = os.path.join(
-                    self.cache_dir, 'plots',
-                    f'spectrum_{self._config_fp}.png'
-                ),
-                config_fp           = self._config_fp,
-            )
-            n_sel = int(self.selected_mask.sum())
-            print(f'[JointPCA] Filtered variant: {n_sel} PCs selected '
-                  f'out of {len(self.selected_mask)}')
-        else:
-            self.selected_mask = None
-            print(f'[JointPCA] Full-spectrum variant: all {n_comp} PCs used')
-
+        # ── 5. Done ──────────────────────────────────────────────────── #
+        print(f'[JointPCA] Full-spectrum Mahalanobis: all {n_comp} PCs used')
         self.setup_flag = True
         print('[JointPCA] Setup complete.')
 
@@ -533,11 +484,10 @@ class JointPCAPostprocessor(BasePostprocessor):
 
         feats      = self._extract_batch(net, x, run_forward=False)
         raw_scores = mahalanobis_scores(
-            features            = feats,
-            mean                = self.mean,
-            components          = self.components,
-            explained_variance  = self.explained_variance,
-            selected_mask       = self.selected_mask,   # None → full spectrum
+            features           = feats,
+            mean               = self.mean,
+            components         = self.components,
+            explained_variance = self.explained_variance,
         )
         # negate: OpenOOD expects higher score = more ID
         return pred, torch.from_numpy(-raw_scores).float()
@@ -552,8 +502,7 @@ class JointPCAPostprocessor(BasePostprocessor):
         score_path = self._path_scores(dataset)
         feat_dim   = self.components.shape[1]
 
-        print(f'\n[JointPCA] Inference: {dataset}  '
-              f'({"filtered" if self.filtered else "full-spectrum"})')
+        print(f'\n[JointPCA] Inference: {dataset}')
 
         net.eval()
         net = net.to(self.device)
@@ -648,7 +597,6 @@ class JointPCAPostprocessor(BasePostprocessor):
             mean               = self.mean,
             components         = self.components,
             explained_variance = self.explained_variance,
-            selected_mask      = self.selected_mask,
         )
         np.savez(score_path,
                  scores=scores.astype(np.float32), labels=all_lbl,
