@@ -4,7 +4,7 @@ Joint-PCA OOD Detection Postprocessor for OpenOOD
 Post-hoc out-of-distribution detection from joint representations.
 
 Extracts multi-layer activations via forward hooks, concatenates them into
-a joint feature vector, fits PCA, and scores test samples via full-spectrum
+a joint feature vector, fits PCA, and scores test samples via All-PC Mahalanobis distance
 Mahalanobis distance.
 
 Layer strategy:
@@ -457,7 +457,7 @@ class JointPCAPostprocessor(BasePostprocessor):
             print(f'[JointPCA] PCA saved: {pca_path}')
 
         # ── 5. Done ──────────────────────────────────────────────────── #
-        print(f'[JointPCA] Full-spectrum Mahalanobis: all {n_comp} PCs used')
+        print(f'[JointPCA] All-PC Mahalanobis: all {n_comp} PCs used')
         self.setup_flag = True
         print('[JointPCA] Setup complete.')
 
