@@ -83,6 +83,12 @@ from .jointpca_postprocessor import JointPCAPostprocessor
 
 ## Running
 
+The commands below use the standard OpenOOD v1.5 checkpoints. Download them first:
+
+```bash
+python scripts/download/download.py --contents checkpoints --checkpoints ood_v1.5
+```
+
 JointPCA uses the standard OpenOOD `main.py` entry point.
 
 **CPU-only machines.** Add `map_location='cpu'` to the three `torch.load` calls in `openood/networks/utils.py`:
@@ -96,12 +102,6 @@ net.load_state_dict(torch.load(network_config.checkpoint, map_location='cpu'), s
 
 # 3. Retry block after RuntimeError:
 loaded_pth = torch.load(network_config.checkpoint, map_location='cpu')
-```
-
-The commands below use the standard OpenOOD v1.5 checkpoints. Download them first:
-
-```bash
-python scripts/download/download.py --contents checkpoints --checkpoints ood_v1.5
 ```
 
 ---
