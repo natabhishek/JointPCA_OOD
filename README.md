@@ -31,7 +31,7 @@ Near-OOD and Far-OOD dataset splits follow the OpenOOD v1.5 benchmark definition
 
 **Feature extraction.** Forward hooks capture activations from multiple layers simultaneously. For ResNet, hooks are placed on all Conv2d layers, residual block outputs, and the penultimate layer; spatial maps are pooled via global average pooling. For ViT, hooks capture every encoder block output, decomposed into the CLS token and a patch-GAP vector. All per-layer vectors are concatenated into a single joint feature `z(x)`.
 
-**PCA.** Sklearn's randomised PCA is fit on up to `max_train_samples` ID training features. The full rank `K = min(N, D) - 1` is used. The fit is cached to disk after the first run.
+**PCA.** Sklearn's randomised PCA is fit on up to `max_train_samples` ID training features. The full rank is used. The fit is cached to disk after the first run.
 
 **Scoring.** Mahalanobis distance in PCA space over all PCs:
 
