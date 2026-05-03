@@ -356,10 +356,8 @@ class JointPCAPostprocessor(BasePostprocessor):
         model_name = net.__class__.__name__.lower()
 
         # All models use the ID test split for feature extraction.
-        # - ResNet18: 9000 samples (validated behaviour, matches reference results)
+        # - ResNet18: 9000 samples 
         # - ResNet50/ViT: 45000 samples
-        # Using 'test' avoids requiring the full training set (e.g. ImageNet-1K
-        # training images are 150GB and not available via the download script).
         is_resnet18 = 'resnet18' in model_name
         if is_resnet18:
             max_samples  = 9000
