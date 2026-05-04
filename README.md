@@ -51,7 +51,7 @@ cd OpenOOD
 pip install -e .
 ```
 
-Follow the OpenOOD README to download benchmark datasets and pre-trained checkpoints using the scripts in `scripts/download/`. For ViT on ImageNet-1K, download a ViT-B/16 checkpoint pretrained on ImageNet-1K separately (e.g. from [timm](https://github.com/huggingface/pytorch-image-models) or Hugging Face) and place it in `results/checkpoints/`.
+Follow the OpenOOD README to download benchmark datasets and pre-trained checkpoints using the scripts in `scripts/download/`.
 
 ### 2. Copy the postprocessor files
 
